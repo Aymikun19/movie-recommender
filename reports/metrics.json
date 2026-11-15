@@ -1,0 +1,83 @@
+{
+  "data": {
+    "raw_ratings": 100000,
+    "kcore_ratings": 68055,
+    "users": 4333,
+    "movies": 2410,
+    "test_ratings": 13491,
+    "test_users_with_liked_movies": 3121
+  },
+  "hybrid_alpha_validation_curve": [
+    [
+      0.0,
+      0.0027863777089783288
+    ],
+    [
+      0.25,
+      0.005159958720330237
+    ],
+    [
+      0.5,
+      0.00887512899896801
+    ],
+    [
+      1.0,
+      0.020467836257309944
+    ],
+    [
+      2.0,
+      0.022531819745442036
+    ],
+    [
+      4.0,
+      0.02414860681114551
+    ],
+    [
+      8.0,
+      0.02325421396628827
+    ]
+  ],
+  "results": [
+    {
+      "model": "Global mean",
+      "rmse": 1.7758814395576181
+    },
+    {
+      "model": "Most popular (all time)",
+      "precision@10": 0.026914450496635694,
+      "recall@10": 0.15875770107782966,
+      "coverage": 0.012448132780082987,
+      "avg_popularity_pct": 99.75462223859077
+    },
+    {
+      "model": "Trending (last 30 days)",
+      "precision@10": 0.031912848446010895,
+      "recall@10": 0.17708271332420542,
+      "coverage": 0.00995850622406639,
+      "avg_popularity_pct": 98.42016128506673
+    },
+    {
+      "model": "User + item biases",
+      "rmse": 1.4193430009986137,
+      "precision@10": 0.0031720602371034926,
+      "recall@10": 0.012681903891072679,
+      "coverage": 0.007883817427385892,
+      "avg_popularity_pct": 89.17316365030261
+    },
+    {
+      "model": "Matrix factorisation (ALS)",
+      "rmse": 1.4158740656838396,
+      "precision@10": 0.003140019224607498,
+      "recall@10": 0.012661861528410711,
+      "coverage": 0.014107883817427386,
+      "avg_popularity_pct": 89.23381014456496
+    },
+    {
+      "model": "Hybrid: ALS + trending (\u03b1=4.0)",
+      "precision@10": 0.033258570970842685,
+      "recall@10": 0.18507647676650815,
+      "coverage": 0.01037344398340249,
+      "avg_popularity_pct": 98.61082725531686
+    }
+  ]
+}
