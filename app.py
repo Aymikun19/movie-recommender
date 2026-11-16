@@ -4,9 +4,12 @@ from pathlib import Path
 import numpy as np
 import streamlit as st
 
+LOGO = Path(__file__).parent / "assets" / "logo.png"
+
 MODEL = Path(__file__).parent / "models" / "als.npz"
-st.set_page_config(page_title="Movie Recommender", page_icon="🎬")
-st.title("🎬 Movie Recommender")
+st.set_page_config(page_title="Movie Recommender", page_icon=str(LOGO))
+st.logo(str(LOGO), size="large")
+st.title("Movie Recommender")
 st.caption("Matrix factorisation (ALS) on MovieTweetings, blended with what's trending. See the README for the evaluation.")
 
 if not MODEL.exists():

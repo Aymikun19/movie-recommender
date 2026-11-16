@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" alt="" width="64" height="64">
+
 # Movie Recommender: Collaborative Filtering with Honest Evaluation
 
 A from-scratch **matrix-factorisation recommender (ALS in NumPy)** evaluated the way a real product would be: on users' *future* ratings, with ranking metrics and a popularity-bias check. The headline finding is that the model with the best rating accuracy is not the best recommender, and a simple hybrid wins.
