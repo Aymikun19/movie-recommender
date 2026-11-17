@@ -33,3 +33,15 @@ def test_als_fits_a_low_rank_signal():
     base = Biases().fit(u, i, r, 40, 30)
     mf = BiasedALS(k=3, reg=0.1, iters=15).fit(u, i, r, 40, 30)
     assert rmse(r, mf.predict(u, i)) < 0.2 * rmse(r, base.predict(u, i))
+
+
+def test_serving_helpers():
+    import numpy as np
+    from src.recsys.serve import because, cosine_neighbours, fold_in, year_of
+
+    Q = np.array([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0], [-1.0, 0.0]])
+    assert cosine_neighbours(Q, 0, 1)[0][0] == 1
+    assert because(Q, 1, [2, 0])[0] == 0
+    p, bu = fold_in({0: 9.0, 2: 3.0}, Q, np.zeros(4), 6.0, 5.0, 0.1)
+    assert p.shape == (2,) and p[0] > p[1]
+    assert year_of("Heat (1995)") == 1995 and year_of("Untitled") is None

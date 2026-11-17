@@ -1,40 +1,133 @@
-"""Streamlit demo: rate a few movies, get recommendations.  Run with:  streamlit run app.py"""
+"""Streamlit demo: rate a few movies, get explained recommendations.  Run with:  streamlit run app.py"""
+from __future__ import annotations
+
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import streamlit as st
 
-LOGO = Path(__file__).parent / "assets" / "logo.png"
+from src.recsys.serve import because, cosine_neighbours, fold_in, year_of, zscore
 
-MODEL = Path(__file__).parent / "models" / "als.npz"
-st.set_page_config(page_title="Movie Recommender", page_icon=str(LOGO))
+ROOT = Path(__file__).parent
+LOGO = ROOT / "assets" / "logo.png"
+MODEL = ROOT / "models" / "als.npz"
+
+st.set_page_config(page_title="Movie Recommender", page_icon=str(LOGO), layout="wide")
 st.logo(str(LOGO), size="large")
-st.title("Movie Recommender")
-st.caption("Matrix factorisation (ALS) on MovieTweetings, blended with what's trending. See the README for the evaluation.")
 
 if not MODEL.exists():
     st.error("Run `python -m src.recsys.train` first.")
     st.stop()
-m = np.load(MODEL, allow_pickle=False)
-titles, Q, bi, mu = m["titles"], m["Q"], m["bi"], float(m["mu"])
+
+
+@st.cache_resource
+def model():
+    m = np.load(MODEL, allow_pickle=False)
+    return {k: m[k] for k in m.files}
+
+
+@st.cache_data
+def catalogue(item_ids: tuple[int, ...]) -> pd.DataFrame:
+    movies = pd.read_csv(ROOT / "data" / "movies.dat", sep="::", engine="python", names=["item", "title", "genres"], encoding="utf-8")
+    movies["genres"] = movies["genres"].fillna("")
+    g = movies.set_index("item")["genres"].to_dict()
+    return pd.DataFrame({"item": item_ids, "genres": [g.get(i, "") for i in item_ids]})
+
+
+M = model()
+titles, Q, bi, mu = M["titles"], M["Q"], M["bi"], float(M["mu"])
+cat = catalogue(tuple(int(x) for x in M["item_ids"]))
+genres_of = [set(filter(None, s.split("|"))) for s in cat["genres"]]
+all_genres = sorted(set().union(*genres_of) - {"Short", "News", "Reality-TV", "Talk-Show", "Game-Show"})
+years = np.array([year_of(t) or 0 for t in titles])
 by_title = {t: k for k, t in enumerate(titles)}
-popular = [titles[k] for k in np.argsort(-m["counts"])[:400]]
+popular = [titles[k] for k in np.argsort(-M["counts"])[:500]]
 
-picked = st.multiselect("Pick movies you've seen", sorted(popular), max_selections=15)
-ratings = {t: st.slider(t, 0, 10, 8, key=t) for t in picked}
-alpha = st.slider("Trending boost", 0.0, 8.0, float(m["alpha"]), help="0 = pure personal taste (ALS); higher = favour movies people are watching right now")
+st.title("Movie Recommender")
+st.caption(
+    f"Matrix factorisation (ALS, {Q.shape[1]} factors) trained on MovieTweetings and blended with what's trending. "
+    f"{len(titles):,} movies in the model."
+)
 
-if st.button("Recommend", type="primary", disabled=len(ratings) < 2):
-    idx = np.array([by_title[t] for t in ratings])
-    r = np.array(list(ratings.values()), float)
-    reg, f_reg = float(m["reg"]), float(m["f_reg"])
-    bu = np.sum(r - mu - bi[idx]) / (len(r) + reg)
-    res = r - mu - bu - bi[idx]
-    p = np.linalg.solve(Q[idx].T @ Q[idx] + f_reg * np.eye(Q.shape[1]), Q[idx].T @ res)
-    pred = mu + bu + bi + Q @ p
-    z = lambda x: (x - x.mean()) / (x.std() + 1e-9)
-    score = z(pred) + alpha * z(m["trending"])
-    score[idx] = -np.inf
-    st.subheader("You might like")
-    for rank, k in enumerate(np.argsort(-score)[:10], 1):
-        st.write(f"**{rank}. {titles[k]}** · predicted rating {np.clip(pred[k], 0, 10):.1f}/10")
+tab_rec, tab_similar, tab_about = st.tabs(["Get recommendations", "Find similar movies", "How it works"])
+
+with tab_rec:
+    left, right = st.columns([1, 1.4], gap="large")
+    with left:
+        st.subheader("1. Rate a few movies")
+        picked = st.multiselect("Movies you've seen", sorted(popular), max_selections=15, placeholder="Start typing a title")
+        ratings = {t: st.slider(t, 0, 10, 8, key=f"r_{t}") for t in picked}
+        st.subheader("2. Tune the results")
+        alpha = st.slider("Trending boost", 0.0, 8.0, float(M["alpha"]), help="0 = pure personal taste; higher favours movies people are watching right now")
+        want = st.multiselect("Only these genres", all_genres, placeholder="Any genre")
+        avoid = st.multiselect("Never show these genres", all_genres, default=["Horror"] if "Horror" in all_genres else None, placeholder="None")
+        lo, hi = int(years[years > 0].min()), int(years.max())
+        yr = st.slider("Release year", lo, hi, (max(lo, 1980), hi))
+        n = st.select_slider("How many", [5, 10, 15, 20], 10)
+
+    with right:
+        if len(ratings) < 2:
+            st.info("Rate at least two movies on the left to get recommendations.")
+        else:
+            idx = {by_title[t]: v for t, v in ratings.items()}
+            p, bu = fold_in(idx, Q, bi, mu, float(M["reg"]), float(M["f_reg"]))
+            pred = mu + bu + bi + Q @ p
+            score = zscore(pred) + alpha * zscore(M["trending"])
+            mask = (years >= yr[0]) & (years <= yr[1])
+            if want:
+                mask &= np.array([bool(g & set(want)) for g in genres_of])
+            if avoid:
+                mask &= np.array([not (g & set(avoid)) for g in genres_of])
+            mask[list(idx)] = False
+            score[~mask] = -np.inf
+            liked = [k for k, v in idx.items() if v >= 7] or list(idx)
+            recs = [k for k in np.argsort(-score)[:n] if np.isfinite(score[k])]
+
+            st.subheader("You might like")
+            if not recs:
+                st.warning("Nothing matches those filters. Try widening the year range or genres.")
+            for rank, k in enumerate(recs, 1):
+                src, sim = because(Q, k, liked)
+                with st.container(border=True):
+                    a, b = st.columns([4, 1])
+                    a.markdown(f"**{rank}. {titles[k]}**")
+                    a.caption(" · ".join(sorted(genres_of[k])) or "Genre unknown")
+                    a.markdown(f"Because you liked *{titles[src]}*" if sim > 0.2 else "Popular with people who rate like you")
+                    b.metric("Predicted", f"{np.clip(pred[k], 0, 10):.1f}/10")
+
+            if recs:
+                st.subheader("Your taste profile")
+                rated = pd.Series([g for k in idx for g in genres_of[k]]).value_counts(normalize=True)
+                recd = pd.Series([g for k in recs for g in genres_of[k]]).value_counts(normalize=True)
+                prof = pd.DataFrame({"Movies you rated": rated, "Recommendations": recd}).fillna(0).sort_values("Movies you rated", ascending=False).head(8)
+                st.bar_chart(prof, horizontal=True, stack=False, height=300)
+                st.download_button(
+                    "Download this list (CSV)",
+                    pd.DataFrame({"rank": range(1, len(recs) + 1), "title": [titles[k] for k in recs], "predicted_rating": [round(float(np.clip(pred[k], 0, 10)), 1) for k in recs]}).to_csv(index=False).encode(),
+                    "recommendations.csv",
+                    "text/csv",
+                )
+
+with tab_similar:
+    st.subheader("Movies like…")
+    st.caption("Nearest neighbours in the learned taste space: movies the same people tend to rate the same way.")
+    seed = st.selectbox("Pick a movie", sorted(popular), index=None, placeholder="Start typing a title")
+    if seed:
+        k = by_title[seed]
+        rows = [{"Movie": titles[j], "Genres": ", ".join(sorted(genres_of[j])), "Similarity": s, "Ratings in data": int(M["counts"][j])} for j, s in cosine_neighbours(Q, k, 12)]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
+                     column_config={"Similarity": st.column_config.ProgressColumn("Similarity", min_value=0, max_value=1, format="%.2f")})
+
+with tab_about:
+    st.subheader("How it works")
+    st.markdown(
+        """
+1. **Learning taste.** Alternating least squares factorises the ratings matrix into a short vector for every movie. Movies with similar vectors are liked by the same people.
+2. **Folding you in.** Your ratings are turned into your own vector with one regularised least-squares step, without retraining the model.
+3. **Blending with trends.** Predicted ratings are standardised and mixed with a recent-popularity score. The trending boost slider sets the mix.
+4. **Explaining picks.** Each recommendation names the movie you liked whose vector is closest to it.
+
+The evaluation (held-out *future* ratings) is in the [README](https://github.com/Aymikun19/movie-recommender#results-held-out-future-ratings): low RMSE alone does not mean good top-10 lists, and the trending-aware hybrid beats every baseline on recall@10.
+"""
+    )

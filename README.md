@@ -38,6 +38,13 @@ A from-scratch **matrix-factorisation recommender (ALS in NumPy)** evaluated the
 - **The hybrid beats every baseline** (recall@10 **0.185**) by re-ranking trending movies with personal taste from ALS.
 - **The trade-off is popularity bias.** Popularity-driven models recommend from about 1% of the catalogue. ALS alone reaches more of it but with poor accuracy. A production system would add diversity constraints or exploration on top.
 
+## The app
+
+- **Recommendations**: rate a few movies, then filter by genre and release year. Each pick says which of your movies it is closest to ("Because you liked …").
+- **Taste profile**: genre mix of what you rated compared with what was recommended, and a CSV download of the list.
+- **Similar movies**: nearest neighbours of any movie in the learned factor space.
+- **How it works**: fold-in, the trending blend and the explanations, in plain language.
+
 ## Project structure
 
 ```
