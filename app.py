@@ -50,7 +50,17 @@ st.caption(
     f"{len(titles):,} movies in the model."
 )
 
-tab_rec, tab_similar, tab_about = st.tabs(["Get recommendations", "Find similar movies", "How it works"])
+watch: dict[str, dict] = st.session_state.setdefault("watchlist", {})
+
+
+def toggle_watch(title: str, predicted: float | None = None, reason: str = "") -> None:
+    if title in watch:
+        del watch[title]
+    else:
+        watch[title] = {"predicted": predicted, "reason": reason, "watched": False}
+
+
+tab_rec, tab_similar, tab_watch, tab_about = st.tabs(["Get recommendations", "Find similar movies", f"Watchlist ({len(watch)})", "How it works"])
 
 with tab_rec:
     left, right = st.columns([1, 1.4], gap="large")
@@ -91,10 +101,14 @@ with tab_rec:
                 src, sim = because(Q, k, liked)
                 with st.container(border=True):
                     a, b = st.columns([4, 1])
+                    why = f"Because you liked {titles[src]}" if sim > 0.2 else "Popular with people who rate like you"
                     a.markdown(f"**{rank}. {titles[k]}**")
                     a.caption(" · ".join(sorted(genres_of[k])) or "Genre unknown")
-                    a.markdown(f"Because you liked *{titles[src]}*" if sim > 0.2 else "Popular with people who rate like you")
+                    a.markdown(f"Because you liked *{titles[src]}*" if sim > 0.2 else why)
                     b.metric("Predicted", f"{np.clip(pred[k], 0, 10):.1f}/10")
+                    saved = titles[k] in watch
+                    b.button("Saved" if saved else "Save", key=f"w_{k}", icon=":material/bookmark_added:" if saved else ":material/bookmark_add:",
+                             on_click=toggle_watch, args=(titles[k], round(float(np.clip(pred[k], 0, 10)), 1), why), width="stretch")
 
             if recs:
                 st.subheader("Your taste profile")
@@ -118,6 +132,43 @@ with tab_similar:
         rows = [{"Movie": titles[j], "Genres": ", ".join(sorted(genres_of[j])), "Similarity": s, "Ratings in data": int(M["counts"][j])} for j, s in cosine_neighbours(Q, k, 12)]
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
                      column_config={"Similarity": st.column_config.ProgressColumn("Similarity", min_value=0, max_value=1, format="%.2f")})
+
+with tab_watch:
+    st.subheader("Your watchlist")
+    st.caption("Save recommendations to watch later. The list lives in this browser tab, so download it to keep it, and upload it next time to pick up where you left off.")
+    up = st.file_uploader("Restore a saved watchlist (CSV)", type="csv", key="watch_up")
+    if up is not None and st.session_state.get("watch_loaded") != up.file_id:
+        try:
+            df_up = pd.read_csv(up)
+            for _, r in df_up.iterrows():
+                t = str(r.get("title", "")).strip()
+                if t:
+                    watch[t] = {"predicted": r.get("predicted_rating"), "reason": str(r.get("reason", "") if pd.notna(r.get("reason", "")) else ""),
+                                "watched": str(r.get("watched", "")).lower() in ("true", "yes", "1")}
+            st.session_state["watch_loaded"] = up.file_id
+            st.success(f"Loaded {len(df_up)} movies.")
+        except Exception:  # noqa: BLE001 - show a friendly message for any malformed upload
+            st.error("That file doesn't look like a watchlist export.")
+    if not watch:
+        st.info("Nothing saved yet. Press Save on any recommendation.")
+    else:
+        df = pd.DataFrame([{"title": t, "predicted_rating": v["predicted"], "reason": v["reason"], "watched": v["watched"]} for t, v in watch.items()])
+        edited = st.data_editor(df, hide_index=True, width="stretch", disabled=["title", "predicted_rating", "reason"], key="watch_editor",
+                                column_config={"title": "Movie", "predicted_rating": st.column_config.NumberColumn("Predicted", format="%.1f"),
+                                               "reason": "Why", "watched": st.column_config.CheckboxColumn("Watched")})
+        for t, w in zip(edited["title"], edited["watched"]):
+            watch[t]["watched"] = bool(w)
+        done = int(edited["watched"].sum())
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Saved", len(edited))
+        c2.metric("Watched", done)
+        c3.metric("Still to watch", len(edited) - done)
+        d1, d2 = st.columns(2)
+        d1.download_button("Download watchlist (CSV)", edited.to_csv(index=False).encode(), "watchlist.csv", "text/csv", type="primary", width="stretch")
+        if d2.button("Remove watched", width="stretch", disabled=done == 0):
+            for t in [t for t, v in watch.items() if v["watched"]]:
+                del watch[t]
+            st.rerun()
 
 with tab_about:
     st.subheader("How it works")
